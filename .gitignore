@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# pytest
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Generated output files
+output/
+
+# Personal / club data
+data/swimmers.csv
+data/swimming_relay_times.xlsx
+data/Relay Sign Up.html
+
+# Source PDFs (compiled into records.json)
+data/Records/
