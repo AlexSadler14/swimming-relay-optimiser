@@ -74,6 +74,18 @@ def run(swimmers: list, fetcher: RecordsFetcher) -> dict:
         if len(indices) > 1:
             prob += pulp.lpSum(x[i] for i in indices) <= 1, f"swimmer_{j}"
 
+    # Constraint 3: each swimmer in at most `max_relays` teams across all events.
+    # The solver still picks whichever relays are best for them and the teams.
+    name_to_max = {s.name: s.max_relays for s in swimmers}
+    swimmer_total_index: dict = {}
+    for i, c in enumerate(candidates):
+        for leg in c["team"].legs:
+            swimmer_total_index.setdefault(leg.swimmer.name, []).append(i)
+    for j, (name, indices) in enumerate(swimmer_total_index.items()):
+        cap = name_to_max.get(name)
+        if cap is not None:
+            prob += pulp.lpSum(x[i] for i in indices) <= cap, f"maxrelays_{j}"
+
     # Solve (silent)
     prob.solve(pulp.PULP_CBC_CMD(msg=0))
 

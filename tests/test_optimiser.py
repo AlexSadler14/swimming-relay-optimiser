@@ -276,6 +276,15 @@ class TestAgeCategories:
 # ---------------------------------------------------------------------------
 
 class TestXGroup:
+    @pytest.fixture(autouse=True)
+    def _enable_72plus(self):
+        """These tests exercise the 72+ category, which is off by default."""
+        import config
+        prev = config.ALLOW_72_PLUS_CATEGORY
+        config.ALLOW_72_PLUS_CATEGORY = True
+        yield
+        config.ALLOW_72_PLUS_CATEGORY = prev
+
     def test_xgroup_swimmers_in_72plus_only(self, empty_fetcher):
         """Swimmers aged 18-24 should only appear in 72+ age category."""
         swimmers = [

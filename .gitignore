@@ -35,6 +35,7 @@ output/
 
 # Personal / club data
 data/swimmers.csv
+data/*_entries.csv
 data/swimming_relay_times.xlsx
 data/Relay Sign Up.html
 

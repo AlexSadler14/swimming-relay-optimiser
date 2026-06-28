@@ -8,6 +8,7 @@ class Swimmer:
     age: int                            # age as of 31 Dec of competition year
     gender: str                         # 'M' or 'F'
     entries: dict = field(default_factory=dict)
+    max_relays: "int | None" = None     # cap on relays this swimmer may be picked for (None = no limit)
     # entries keys: (event, gender) tuples, e.g. ("4x50_free", "men")
     # entries values: list of {"stroke": str, "time": float}
     #   Freestyle: [{"stroke": "free", "time": 22.0}]

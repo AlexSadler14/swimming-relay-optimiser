@@ -40,6 +40,11 @@ XGROUP_MIN_AGE = 18
 XGROUP_MAX_AGE = 24
 XGROUP_RELAY_MIN_COMBINED = 72   # 72+ category minimum combined age
 
+# Whether the 72+ (Senior Age Group) relay category is offered at all.
+# Off by default -- many competitions don't run it. Enable with --allow-72plus.
+# When off, swimmers aged 18-24 cannot be placed in any relay.
+ALLOW_72_PLUS_CATEGORY = False
+
 SCORING_WEIGHTS = {
     "world":         10000,
     "european":      1000,

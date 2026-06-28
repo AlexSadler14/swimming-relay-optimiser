@@ -8,6 +8,7 @@ Rules:
 - Regular Masters categories (100-119, 120-159, ..., 320-359) require no X Group members.
 - The combined age bracket is the smallest bracket that contains the sum.
 """
+import config
 from config import MASTERS_AGE_GROUPS, XGROUP_MIN_AGE, XGROUP_MAX_AGE, XGROUP_RELAY_MIN_COMBINED
 
 
@@ -20,6 +21,10 @@ def get_relay_age_group(swimmers: list) -> "str | None":
     has_xgroup = any(s.is_xgroup for s in swimmers)
 
     if has_xgroup:
+        # 72+ (Senior Age Group) is the only category an X Group swimmer can enter.
+        # If the competition doesn't offer it, no valid category exists for this team.
+        if not config.ALLOW_72_PLUS_CATEGORY:
+            return None
         if combined >= XGROUP_RELAY_MIN_COMBINED:
             return "72+"
         return None  # Has X Group swimmer but combined age < 72 — invalid

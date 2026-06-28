@@ -3,9 +3,13 @@ Swimming Relay Optimiser -- CLI entry point.
 
 Usage:
     python main.py swimmers.csv --club "Trafford Metro SC" --output results.xlsx
+    Options:
+      --allow-72plus   include the 72+ (Senior Age Group) category (off by default)
+      --max-relays N   cap every swimmer at N relays (overridden by a per-swimmer column)
 
 Expected CSV columns:
     name, age, gender,
+    max_relays,                      (optional: max relays this swimmer may swim; blank = no limit)
     mens_4x50_free, mens_4x50_free_time,
     womens_4x50_free, womens_4x50_free_time,
     mixed_4x50_free, mixed_4x50_free_time,
@@ -16,9 +20,9 @@ Expected CSV columns:
     ... (same pattern for 4x100_medley)
 
 Y/N columns: y or n (case-insensitive). Blank treated as n.
-Freestyle time format: M:SS.ss  e.g. 1:05.23  or  SS.ss  e.g. 28.50
+Time format: seconds (28, 28.5, 28.50) or M:SS (1:05, 1:05.23). Decimals optional.
 Medley stroke: back, breast, fly, or free. Multiple: free,back
-Medley time: matches stroke order. Multiple: 22.00,26.50
+Medley time: matches stroke order. Multiple: 22, 26.5
 """
 import re
 import sys
@@ -33,10 +37,12 @@ from models import Swimmer
 from record_fetcher import RecordsFetcher
 import optimiser
 import reporter
+import config
 from config import EVENT_GENDER_COLS, RELAY_EVENTS
 
-# Valid formats: "28.50"  "1:05.23"  "10:05.23"
-_TIME_RE = re.compile(r"^(\d+:)?\d{1,2}\.\d{2}$")
+# Accepted time formats (decimals optional, 1 or 2 d.p.):
+#   "28"  "28.5"  "28.50"  "1:05"  "1:05.2"  "1:05.23"  "10:05.23"
+_TIME_RE = re.compile(r"^(\d+:)?\d{1,2}(\.\d{1,2})?$")
 
 # Values that mean "not entering this event" -- no warning needed
 _BLANK_VALUES = {"", "-", "n/a", "none", "null", "no", "n"}
@@ -58,7 +64,7 @@ def parse_time(value: str, swimmer_name: str, field: str) -> "tuple[float | None
     if not _TIME_RE.match(v):
         return None, (f"  [INPUT WARNING] {swimmer_name} -- {field}: "
                       f"unrecognised format {value!r}  "
-                      f"(expected M:SS.ss or SS.ss, e.g. 1:05.23 or 28.50) -- treated as blank")
+                      f"(expected seconds or M:SS, e.g. 28, 28.5, 28.50 or 1:05.23) -- treated as blank")
     parts = v.split(":")
     try:
         secs = int(parts[0]) * 60 + float(parts[1]) if len(parts) == 2 else float(parts[0])
@@ -170,6 +176,22 @@ def load_swimmers(path: str) -> list:
                              f"gender must be M or F (got {row.get('gender','')!r}) -- row skipped")
             continue
 
+        # --- max relays (optional per-swimmer cap; blank = no limit) ---
+        max_relays = None
+        max_relays_raw = row.get("max_relays", "").strip()
+        if max_relays_raw:
+            try:
+                max_relays = int(max_relays_raw)
+                if max_relays < 1:
+                    row_warnings.append(
+                        f"  [INPUT WARNING] {name} -- max_relays {max_relays_raw!r} "
+                        f"must be 1 or more -- ignored (no limit)")
+                    max_relays = None
+            except ValueError:
+                row_warnings.append(
+                    f"  [INPUT WARNING] {name} -- max_relays {max_relays_raw!r} "
+                    f"is not a whole number -- ignored (no limit)")
+
         # --- relay entries ---
         entries = {}
         for (event, gender_key), col_info in EVENT_GENDER_COLS.items():
@@ -233,7 +255,7 @@ def load_swimmers(path: str) -> list:
 
         warnings.extend(row_warnings)
         swimmers.append(Swimmer(name=name, age=age, gender=gender,
-                                entries=entries))
+                                entries=entries, max_relays=max_relays))
 
     # Print all warnings together after loading
     if warnings:
@@ -269,20 +291,39 @@ def _print_medley_coverage(swimmers: list):
 def main():
     parser = argparse.ArgumentParser(description="Swimming Relay Optimiser")
     parser.add_argument("swimmers", help="Path to swimmers CSV or Excel file")
-    parser.add_argument("--output", default="output/results.xlsx",
-                        help="Path for output file (default: output/results.xlsx)")
+    parser.add_argument("--output", default="results.xlsx",
+                        help="Output filename, saved in the output/ folder "
+                             "(default: results.xlsx)")
     parser.add_argument("--club", default="",
                         help="Club name shown in the report header")
     parser.add_argument("--csv", action="store_true",
                         help="Also export a raw CSV alongside the Excel file")
+    parser.add_argument("--allow-72plus", action="store_true",
+                        help="Enable the 72+ (Senior Age Group) relay category. "
+                             "Off by default; many competitions don't run it.")
+    parser.add_argument("--max-relays", type=int, default=None, metavar="N",
+                        help="Default cap on relays per swimmer. A per-swimmer "
+                             "'max_relays' column in the input overrides this.")
     args = parser.parse_args()
+
+    config.ALLOW_72_PLUS_CATEGORY = args.allow_72plus
 
     print(f"Loading swimmers from {args.swimmers!r}...")
     swimmers = load_swimmers(args.swimmers)
     if not swimmers:
         print("No swimmers loaded. Check your input file.")
         sys.exit(1)
-    print(f"  Loaded {len(swimmers)} swimmers.\n")
+
+    # Apply the global --max-relays default to anyone without an explicit cap.
+    if args.max_relays is not None:
+        for s in swimmers:
+            if s.max_relays is None:
+                s.max_relays = args.max_relays
+
+    print(f"  Loaded {len(swimmers)} swimmers.")
+    if not config.ALLOW_72_PLUS_CATEGORY:
+        print("  72+ (Senior Age Group) category: OFF  (use --allow-72plus to enable)")
+    print()
 
     print("  Medley stroke coverage:")
     _print_medley_coverage(swimmers)
@@ -302,8 +343,24 @@ def main():
 
     reporter.print_summary(committed, fetcher)
 
-    xl_path = args.output if args.output.endswith(".xlsx") else args.output + ".xlsx"
-    reporter.export_excel(committed, fetcher, xl_path, club_name=args.club)
+    # Always save into the output/ folder, using just the filename the user gave.
+    OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+    filename = os.path.basename(args.output)
+    if not filename.endswith(".xlsx"):
+        filename += ".xlsx"
+    xl_path = os.path.join(OUTPUT_DIR, filename)
+    try:
+        reporter.export_excel(committed, fetcher, xl_path, club_name=args.club)
+    except PermissionError:
+        # Almost always means the file is open in Excel -- save under a new name
+        # instead of crashing so the user doesn't lose the run.
+        base, ext = os.path.splitext(xl_path)
+        from datetime import datetime
+        fallback = f"{base}_{datetime.now():%H%M%S}{ext}"
+        print(f"  [WARNING] Could not write {xl_path!r} -- is it open in Excel?")
+        print(f"            Saving to {fallback!r} instead.")
+        reporter.export_excel(committed, fetcher, fallback, club_name=args.club)
+        xl_path = fallback
 
     if args.csv:
         csv_path = xl_path.replace(".xlsx", ".csv")
