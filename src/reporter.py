@@ -10,6 +10,8 @@ import csv
 import os
 from scorer import Scorer
 from record_fetcher import RecordsFetcher
+from relay_builder import build_relay_teams
+from config import RELAY_EVENTS, GENDER_KEYS
 
 RECORD_LEVELS = ["world", "european", "british"]
 
@@ -131,11 +133,81 @@ def print_summary(committed: dict, fetcher: RecordsFetcher):
         print("=" * 70)
 
 
+def _age_sort_key(age_cat: str) -> int:
+    """Sort age categories numerically: "72+" -> 72, "120-159" -> 120."""
+    digits = "".join(c for c in age_cat.split("-")[0] if c.isdigit())
+    return int(digits) if digits else 0
+
+
+def fastest_reference_rows(swimmers: list, fetcher: RecordsFetcher):
+    """
+    Yield the single fastest possible team for every event / gender / age group,
+    computed in isolation -- ignoring the one-relay-per-swimmer rule.
+
+    Each item is (event, gender, age_cat, team, beaten_levels, note) where
+    `note` is e.g. "+0.09s off World, beats E/B" (gap to the nearest record not
+    yet beaten, plus any records the team is already under).
+
+    Reference-only: the same swimmer may appear across several teams here.
+    """
+    for event in RELAY_EVENTS:
+        for gender in GENDER_KEYS:
+            eligible = [s for s in swimmers if s.enters(event, gender)]
+            teams = build_relay_teams(eligible, event, gender)
+            if not teams:
+                continue
+
+            fastest_by_age = {}
+            for team in teams:  # build_relay_teams returns ascending by time
+                fastest_by_age.setdefault(team.age_category, team)
+
+            for age_cat in sorted(fastest_by_age, key=_age_sort_key):
+                team = fastest_by_age[age_cat]
+                records = [(lvl, rec) for lvl in RECORD_LEVELS
+                           if (rec := fetcher.get_record(lvl, event, age_cat, gender))]
+                beaten     = [lvl for lvl, rec in records if team.total_time < rec.time]
+                not_beaten = [(lvl, rec) for lvl, rec in records if team.total_time >= rec.time]
+
+                parts = []
+                if not_beaten:
+                    # Closest record still ahead of the team -> the next one to chase.
+                    lvl, rec = max(not_beaten, key=lambda lr: lr[1].time)
+                    parts.append(f"+{team.total_time - rec.time:.2f}s off {lvl.capitalize()}")
+                if beaten:
+                    parts.append(f"beats {'/'.join(b[0].upper() for b in beaten)}")
+
+                yield event, gender, age_cat, team, beaten, ", ".join(parts)
+
+
+def print_fastest_reference(swimmers: list, fetcher: RecordsFetcher):
+    """Print the fastest-possible-per-slot reference table to the console."""
+    print()
+    print("=" * 70)
+    print("  FASTEST POSSIBLE TEAM PER EVENT  (reference only)")
+    print("=" * 70)
+    print("  Best team for each event / age group in isolation. Swimmers may")
+    print("  appear in several teams here; your committed entries above honour")
+    print("  the one-relay-per-swimmer rule.")
+
+    current_header = None
+    for event, gender, age_cat, team, beaten, note in fastest_reference_rows(swimmers, fetcher):
+        header = f"{_GENDER_LABEL[gender]} {_EVENT_LABEL.get(event, event)}"
+        if header != current_header:
+            print(f"\n  {header}")
+            current_header = header
+        names  = ", ".join(leg.swimmer.name for leg in team.legs)
+        suffix = f"  ({note})" if note else ""
+        print(f"    [{age_cat:<8s}] {team.format_time()}{suffix}")
+        print(f"               {names}")
+    print("=" * 70)
+
+
 # ---------------------------------------------------------------------------
 # Excel export  (mirrors Trafford Metro report style)
 # ---------------------------------------------------------------------------
 
-def export_excel(committed: dict, fetcher: RecordsFetcher, path: str, club_name: str = ""):
+def export_excel(committed: dict, fetcher: RecordsFetcher, path: str, club_name: str = "",
+                 swimmers: list = None):
     """
     Generate an Excel workbook with one table per relay team, matching the
     layout of the Trafford Metro 'Record Potential Teams' report.
@@ -485,6 +557,60 @@ def export_excel(committed: dict, fetcher: RecordsFetcher, path: str, club_name:
             c.border    = _border()
 
             ws.row_dimensions[row].height = row_height
+            row += 1
+
+    # ---- fastest-possible reference section (ignores swimmer sharing) ----
+    if swimmers:
+        row += 1
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=17)
+        c = ws.cell(row, 1, "  FASTEST POSSIBLE TEAM PER EVENT  (reference only)")
+        c.font      = _font(bold=True, color=C_HEADER_FG, size=11)
+        c.fill      = _fill(C_HEADER_BG)
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[row].height = 20
+        row += 1
+
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=17)
+        c = ws.cell(row, 1, "  Best team for each event / age group in isolation. Swimmers may "
+                            "appear in several teams here; the entries above honour the "
+                            "one-relay-per-swimmer rule.")
+        c.font      = _font(size=9, color="595959")
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[row].height = 14
+        row += 1
+
+        current_header = None
+        for event, gender, age_cat, team, beaten, note in fastest_reference_rows(swimmers, fetcher):
+            header = f"  {_GENDER_LABEL[gender]} {_EVENT_LABEL.get(event, event)}"
+            if header != current_header:
+                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=17)
+                c = ws.cell(row, 1, header)
+                c.font      = _font(bold=True, size=10)
+                c.fill      = _fill(C_SUBHEAD_BG)
+                c.alignment = Alignment(horizontal="left", vertical="center")
+                c.border    = _border()
+                ws.row_dimensions[row].height = 16
+                row += 1
+                current_header = header
+
+            fill  = _fill(C_BREAK_BG) if beaten else PatternFill()
+            names = ", ".join(leg.swimmer.name for leg in team.legs)
+            cells = [
+                (1, 2, age_cat,            _font(bold=True, size=10), _center()),
+                (3, 4, team.format_time(), _font(bold=True, size=10), _center()),
+                (5, 9, note, _font(bold=bool(beaten), color=(C_DIFF_NEG if beaten else "595959"), size=9),
+                 Alignment(horizontal="left", vertical="center", indent=1)),
+                (10, 17, names, _font(size=9),
+                 Alignment(horizontal="left", vertical="center", wrap_text=True, indent=1)),
+            ]
+            for s_col, e_col, val, fnt, align in cells:
+                ws.merge_cells(start_row=row, start_column=s_col, end_row=row, end_column=e_col)
+                c = ws.cell(row, s_col, val)
+                c.font = fnt
+                c.fill = fill
+                c.alignment = align
+                c.border = _border()
+            ws.row_dimensions[row].height = 16
             row += 1
 
     # ---- column widths ----

@@ -342,6 +342,7 @@ def main():
     print(f"  British records potentially broken:  {stats['british']}\n")
 
     reporter.print_summary(committed, fetcher)
+    reporter.print_fastest_reference(swimmers, fetcher)
 
     # Always save into the output/ folder, using just the filename the user gave.
     OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
@@ -350,7 +351,7 @@ def main():
         filename += ".xlsx"
     xl_path = os.path.join(OUTPUT_DIR, filename)
     try:
-        reporter.export_excel(committed, fetcher, xl_path, club_name=args.club)
+        reporter.export_excel(committed, fetcher, xl_path, club_name=args.club, swimmers=swimmers)
     except PermissionError:
         # Almost always means the file is open in Excel -- save under a new name
         # instead of crashing so the user doesn't lose the run.
@@ -359,7 +360,7 @@ def main():
         fallback = f"{base}_{datetime.now():%H%M%S}{ext}"
         print(f"  [WARNING] Could not write {xl_path!r} -- is it open in Excel?")
         print(f"            Saving to {fallback!r} instead.")
-        reporter.export_excel(committed, fetcher, fallback, club_name=args.club)
+        reporter.export_excel(committed, fetcher, fallback, club_name=args.club, swimmers=swimmers)
         xl_path = fallback
 
     if args.csv:
