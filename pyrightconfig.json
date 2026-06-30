@@ -1,0 +1,7 @@
+{
+  "extraPaths": ["src"],
+  "executionEnvironments": [
+    { "root": ".", "extraPaths": ["src"] },
+    { "root": "src" }
+  ]
+}

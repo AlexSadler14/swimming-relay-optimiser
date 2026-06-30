@@ -42,41 +42,75 @@ For running tests:
 pip install pytest
 ```
 
-## Quick Start
+## Standalone app (.exe) — no Python needed
 
+To hand the tool to someone without Python, build a single double-clickable Windows app:
+
+1. Double-click **`Build EXE.bat`** (one-time; needs Python + internet to fetch PyInstaller).
+2. It produces **`dist/Relay Optimiser.exe`** — a single file you can copy anywhere and double-click to open the editor window. No Python, no command line.
+
+Or build it from a terminal:
 ```bash
-python main.py data/swimmers_template.csv --output results.xlsx --club "My Club"
+pip install pyinstaller
+pyinstaller --noconfirm RelayOptimiser.spec
 ```
 
-This loads swimmers from the template file, runs the optimiser, prints a summary to the console, and exports a formatted Excel report.
+The records database and the ILP solver are bundled inside the exe. (Rebuild after changing `records.json` or the code.)
+
+## Quick Start
+
+**Easiest (no build):** double-click **`Relay Optimiser.bat`** (or drag a swimmers CSV onto it) — needs Python installed. The interactive editor window opens; if you didn't supply a file, click **Load swimmers…** to pick one.
+
+From a terminal:
+```bash
+python main.py data/swimmers_template.csv --club "My Club"
+```
+
+This loads swimmers from the template file, runs the optimiser, and opens the **interactive editor** (see below). To skip the window and write the Excel report directly, add `--excel`.
+
+## Interactive editor (GUI)
+
+Running `main.py` opens a window showing the optimal relay teams. From there you can fine-tune the plan by hand:
+
+- **Swap a swimmer** — each leg has a dropdown listing every valid swimmer for that leg (entered the event, and — for medley — swims that stroke), with their split time. Times and record deltas update instantly.
+- **Blank a leg** (`✕`) — remove a swimmer to an empty slot, e.g. while rearranging a mixed relay.
+- **Live flags** — the editor highlights problems rather than blocking them: a swimmer used twice in the same event (red), two teams landing in the same age group (red), a mixed relay that isn't 2 men + 2 women (amber), or a swap that moves the team into a different age bracket (amber badge). Record-breaking teams are shaded green.
+- **Dynamic age brackets** — swapping swimmers recomputes the team's combined-age bracket and compares against the record for that bracket.
+- **Revert to optimal** — undo all manual edits.
+- **Re-optimise / Course / 72+** — re-run the optimiser, switch between long/short course records, or toggle the 72+ category.
+- **Export to Excel** — save the current (edited) plan as a formatted report.
 
 ## Usage
 
 ```
-python main.py <swimmers_file> [options]
+python main.py [swimmers_file] [options]
 ```
 
 ### Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `swimmers_file` | Path to a CSV or Excel (.xlsx) file containing swimmer data |
-| `--output PATH` | Output Excel file path (default: `results.xlsx`) |
+| `swimmers_file` | Path to a CSV or Excel (.xlsx) file. Optional — in GUI mode you can pick one from the window |
+| `--excel` | Headless mode: skip the GUI and write the Excel report directly (the original behaviour). Requires a swimmers file |
+| `--gui` | Open the interactive editor (this is the default) |
+| `--output PATH` | Output Excel filename for `--excel` mode (default: `results.xlsx`) |
 | `--club NAME` | Club name shown in the report header |
-| `--csv` | Also export a raw CSV alongside the Excel file |
-| `--method {ilp,greedy}` | Optimisation method (default: `ilp`) |
+| `--csv` | In `--excel` mode, also export a raw CSV alongside the Excel file |
+| `--allow-72plus` | Enable the 72+ (Senior Age Group) relay category (off by default) |
+| `--max-relays N` | Default cap on relays per swimmer |
+| `--longcourse` / `--shortcourse` | Which records to compare against: short course (25m, default) or long course (50m) |
 
 ### Examples
 
 ```bash
-# Basic run with default settings
-python main.py swimmers.csv
+# Open the interactive editor (default)
+python main.py swimmers.csv --club "Trafford Metro SC"
 
-# Full options
-python main.py swimmers.csv --output relay_plan.xlsx --club "Trafford Metro SC" --csv --method ilp
+# Open the editor with no file; pick one from the window
+python main.py
 
-# Quick greedy run (faster, not globally optimal)
-python main.py swimmers.csv --method greedy
+# Headless: write the Excel report directly, plus a CSV
+python main.py swimmers.csv --excel --output relay_plan.xlsx --csv
 ```
 
 ## Input Format
@@ -187,13 +221,15 @@ Ranks all candidate teams by score and commits them one at a time, skipping any 
 
 ## Records Database
 
-The file `data/records.json` contains 357 relay records compiled from official sources:
-- **World Records** (FINA Masters)
+The file `data/records.json` holds relay records compiled from official sources, for **both** long course (50m pool) and short course (25m pool):
+- **World Records** (World Aquatics Masters)
 - **European Records** (European Aquatics Masters)
 - **British Records** (Swim England Masters)
 - **SAG Records** (Senior Age Group / 72+)
 
-Records are for long course (50m pool) relays. To update records, edit `data/records.json` directly -- each entry has `level`, `event`, `age_category`, `gender`, and `time` (in seconds).
+The JSON is split into `long_course` and `short_course` sections, each containing `world` / `european` / `british` levels keyed by `gender` -> `age_category` -> `event`. The optimiser compares against the short-course set by default; pass `--longcourse` to use the 50m-pool records instead. **Make sure the swimmer times in your input file are for the same course you select.**
+
+SAG (72+) records are published long course only, so the same SAG figures are used for both courses. To update records, edit `data/records.json` directly (`null` means no record set / N/T).
 
 ## Configuration
 
@@ -222,7 +258,8 @@ The test suite contains 41 tests covering constraint satisfaction, scoring logic
 
 ```
 Swimming Relay Optimiser/
-├── main.py                 # CLI entry point, input parsing
+├── main.py                 # Entry point: GUI by default, --excel for headless
+├── Relay Optimiser.bat     # Double-click launcher (opens the GUI)
 ├── config.py               # Events, scoring weights, age brackets, column mappings
 ├── requirements.txt        # Python dependencies
 │
@@ -233,12 +270,16 @@ Swimming Relay Optimiser/
 │   ├── scorer.py           # Scores teams against records
 │   ├── record_fetcher.py   # Loads and indexes records from JSON
 │   ├── optimiser.py        # ILP and greedy optimisation methods
-│   └── reporter.py         # Console summary and Excel/CSV export
+│   ├── reporter.py         # Console summary and Excel/CSV export
+│   ├── timefmt.py          # Shared time formatters
+│   ├── relay_eval.py       # Pure logic backing the GUI (eval, candidates, conflicts)
+│   └── relay_gui.py        # Interactive Tkinter editor
 │
 ├── tests/
-│   └── test_optimiser.py   # 41 unit tests
+│   ├── test_optimiser.py   # Optimiser unit tests
+│   └── test_relay_eval.py  # GUI logic unit tests
 │
 └── data/
-    ├── records.json            # 357 compiled relay records
+    ├── records.json            # compiled relay records (long + short course)
     └── swimmers_template.csv   # Example input with 8 swimmers
 ```

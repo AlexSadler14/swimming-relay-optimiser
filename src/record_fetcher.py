@@ -4,13 +4,25 @@ Provides fast lookup by (level, event, age_category, gender).
 """
 import json
 import os
+import sys
 from models import Record
 
-# Path relative to project root
-_RECORDS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "records.json")
+
+def _records_path() -> str:
+    """Locate data/records.json both when run from source and when bundled
+    into a PyInstaller exe (which extracts data files under sys._MEIPASS)."""
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled:
+        return os.path.join(bundled, "data", "records.json")
+    return os.path.join(os.path.dirname(__file__), "..", "data", "records.json")
+
+
+_RECORDS_PATH = _records_path()
 
 LEVELS = ["world", "european", "british"]
 SAG_CATEGORY = "72+"
+COURSES = ["long_course", "short_course"]
+DEFAULT_COURSE = "long_course"
 
 
 def _parse_time(time_str: str) -> float:
@@ -21,16 +33,19 @@ def _parse_time(time_str: str) -> float:
     return int(parts[0]) * 60 + float(parts[1])
 
 
-def load_records() -> list:
-    """Load all records from JSON and return list[Record]."""
+def load_records(course: str = DEFAULT_COURSE) -> list:
+    """Load all records for the given course (long_course / short_course)."""
+    if course not in COURSES:
+        raise ValueError(f"Unknown course {course!r}; expected one of {COURSES}")
+
     with open(_RECORDS_PATH, encoding="utf-8") as f:
         data = json.load(f)
 
     records = []
 
-    # Masters records (world / european / british)
+    # Masters records (world / european / british) for the selected course
     for level in LEVELS:
-        level_data = data[level]
+        level_data = data[course][level]
         for gender, age_groups in level_data.items():
             for age_cat, events in age_groups.items():
                 for event, time_str in events.items():
@@ -70,8 +85,9 @@ class RecordsFetcher:
     Provides O(1) lookup of records by (level, event, age_category, gender).
     """
 
-    def __init__(self):
-        self._records = load_records()
+    def __init__(self, course: str = DEFAULT_COURSE):
+        self.course = course
+        self._records = load_records(course)
         self._index: dict = {}
         for rec in self._records:
             key = (rec.level, rec.event, rec.age_category, rec.gender)

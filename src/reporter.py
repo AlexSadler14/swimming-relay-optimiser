@@ -12,6 +12,7 @@ from scorer import Scorer
 from record_fetcher import RecordsFetcher
 from relay_builder import build_relay_teams
 from config import RELAY_EVENTS, GENDER_KEYS
+from timefmt import fmt_time as _fmt_time, fmt_split as _fmt_split
 
 RECORD_LEVELS = ["world", "european", "british"]
 
@@ -49,8 +50,9 @@ def print_summary(committed: dict, fetcher: RecordsFetcher):
     record_breakers = [(k, v) for k, v in entries if v["records_broken"]]
     other_teams     = [(k, v) for k, v in entries if not v["records_broken"]]
 
+    course_label = "Short Course (25m)" if getattr(fetcher, "course", "long_course") == "short_course" else "Long Course (50m)"
     print("=" * 70)
-    print("  SWIMMING RELAY OPTIMISER -- RESULTS")
+    print(f"  SWIMMING RELAY OPTIMISER -- RESULTS  [{course_label}]")
     print("=" * 70)
     print(f"\n  Record-breaking opportunities: {len(record_breakers)}")
     print(f"  Other valid relay entries:      {len(other_teams)}")
@@ -137,6 +139,17 @@ def _age_sort_key(age_cat: str) -> int:
     """Sort age categories numerically: "72+" -> 72, "120-159" -> 120."""
     digits = "".join(c for c in age_cat.split("-")[0] if c.isdigit())
     return int(digits) if digits else 0
+
+
+_EVENT_INDEX = {ev: i for i, ev in enumerate(RELAY_EVENTS)}
+_GENDER_INDEX = {g: i for i, g in enumerate(GENDER_KEYS)}
+
+
+def _event_order_key(kv):
+    """Order committed slots by event, then gender (men, women, mixed), then age."""
+    (event, gender, age_cat), _ = kv
+    return (_EVENT_INDEX.get(event, 99), _GENDER_INDEX.get(gender, 99),
+            _age_sort_key(age_cat))
 
 
 def fastest_reference_rows(swimmers: list, fetcher: RecordsFetcher):
@@ -260,7 +273,8 @@ def export_excel(committed: dict, fetcher: RecordsFetcher, path: str, club_name:
     row = 1
 
     # ---- title row ----
-    title = f"{club_name + '  --  ' if club_name else ''}Masters Relay Optimiser  (Long Course)"
+    course_label = "Short Course" if getattr(fetcher, "course", "long_course") == "short_course" else "Long Course"
+    title = f"{club_name + '  --  ' if club_name else ''}Masters Relay Optimiser  ({course_label})"
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=17)
     c = ws.cell(row, 1, title)
     c.font      = _font(bold=True, color=C_HEADER_FG, size=13)
@@ -361,7 +375,8 @@ def export_excel(committed: dict, fetcher: RecordsFetcher, path: str, club_name:
 
         row += 1  # blank row between summary and team tables
 
-    for (event, gender, age_cat), v in sorted_entries:
+    # Team tables are listed in event order (men, women, mixed within each event).
+    for (event, gender, age_cat), v in sorted(committed.items(), key=_event_order_key):
         team  = v["team"]
         broken = v["records_broken"]
 
@@ -668,17 +683,4 @@ def export_csv(committed: dict, fetcher: RecordsFetcher, path: str):
     print(f"CSV exported to {path}")
 
 
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-
-def _fmt_time(secs: float) -> str:
-    mins = int(secs // 60)
-    s = secs - mins * 60
-    return f"{mins}:{s:05.2f}"
-
-
-def _fmt_split(secs: float) -> str:
-    mins = int(secs // 60)
-    s = secs - mins * 60
-    return f"{mins}:{s:05.2f}" if mins else f"0:{s:05.2f}"
+# Time formatters (_fmt_time / _fmt_split) are imported from timefmt at the top.

@@ -39,6 +39,7 @@ import optimiser
 import reporter
 import config
 from config import EVENT_GENDER_COLS, RELAY_EVENTS
+from timefmt import secs_to_str as _secs_to_time_str
 
 # Accepted time formats (decimals optional, 1 or 2 d.p.):
 #   "28"  "28.5"  "28.50"  "1:05"  "1:05.2"  "1:05.23"  "10:05.23"
@@ -80,13 +81,6 @@ def parse_time(value: str, swimmer_name: str, field: str) -> "tuple[float | None
     return secs, None
 
 
-def _secs_to_time_str(total_secs: float) -> str:
-    """Convert a total-seconds float to M:SS.ss or SS.ss string."""
-    mins = int(total_secs // 60)
-    secs = total_secs - mins * 60
-    return f"{mins}:{secs:05.2f}" if mins > 0 else f"{secs:.2f}"
-
-
 def _excel_val_to_str(value) -> str:
     """
     Convert an openpyxl cell value to a plain string.
@@ -124,6 +118,8 @@ def _load_rows(path: str) -> "tuple[list[str], list[dict]]":
         from openpyxl import load_workbook
         wb = load_workbook(path, data_only=True)
         ws = wb.active
+        if ws is None:
+            return [], []
         all_rows = list(ws.iter_rows(values_only=True))
         if not all_rows:
             return [], []
@@ -290,7 +286,14 @@ def _print_medley_coverage(swimmers: list):
 
 def main():
     parser = argparse.ArgumentParser(description="Swimming Relay Optimiser")
-    parser.add_argument("swimmers", help="Path to swimmers CSV or Excel file")
+    parser.add_argument("swimmers", nargs="?", default=None,
+                        help="Path to swimmers CSV or Excel file. Optional in GUI "
+                             "mode -- you can pick a file from the window instead.")
+    parser.add_argument("--excel", action="store_true",
+                        help="Headless mode: skip the GUI and write the Excel "
+                             "report directly (the original behaviour).")
+    parser.add_argument("--gui", action="store_true",
+                        help="Open the interactive editor window (this is the default).")
     parser.add_argument("--output", default="results.xlsx",
                         help="Output filename, saved in the output/ folder "
                              "(default: results.xlsx)")
@@ -304,10 +307,46 @@ def main():
     parser.add_argument("--max-relays", type=int, default=None, metavar="N",
                         help="Default cap on relays per swimmer. A per-swimmer "
                              "'max_relays' column in the input overrides this.")
+    course_group = parser.add_mutually_exclusive_group()
+    course_group.add_argument("--longcourse", "--long-course", dest="course",
+                              action="store_const", const="long_course",
+                              help="Compare against long course (50m pool) records.")
+    course_group.add_argument("--shortcourse", "--short-course", dest="course",
+                              action="store_const", const="short_course",
+                              help="Compare against short course (25m pool) records. "
+                                   "This is the default.")
+    parser.set_defaults(course="short_course")
     args = parser.parse_args()
 
     config.ALLOW_72_PLUS_CATEGORY = args.allow_72plus
 
+    # GUI is the default; --excel runs the original headless export.
+    if not args.excel:
+        run_gui(args)
+        return
+    if not args.swimmers:
+        parser.error("--excel requires a swimmers file argument")
+    run_headless(args)
+
+
+def run_gui(args):
+    """Open the interactive editor window."""
+    from relay_gui import launch_gui
+    swimmers = []
+    if args.swimmers:
+        print(f"Loading swimmers from {args.swimmers!r}...")
+        swimmers = load_swimmers(args.swimmers)
+        if not swimmers:
+            print("No swimmers loaded. Check your input file.")
+    launch_gui(
+        swimmers, None,
+        course=args.course, club=args.club, allow_72plus=args.allow_72plus,
+        max_relays=args.max_relays, swimmers_path=args.swimmers,
+        load_swimmers_fn=load_swimmers,
+    )
+
+
+def run_headless(args):
     print(f"Loading swimmers from {args.swimmers!r}...")
     swimmers = load_swimmers(args.swimmers)
     if not swimmers:
@@ -329,8 +368,9 @@ def main():
     _print_medley_coverage(swimmers)
     print()
 
-    print("Loading records database...")
-    fetcher = RecordsFetcher()
+    course_label = "Short Course (25m)" if args.course == "short_course" else "Long Course (50m)"
+    print(f"Loading records database... ({course_label})")
+    fetcher = RecordsFetcher(course=args.course)
     print(f"  Loaded {len(fetcher.all_records())} records.\n")
 
     print("Running optimiser...")
